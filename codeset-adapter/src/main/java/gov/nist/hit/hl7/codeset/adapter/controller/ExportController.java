@@ -26,7 +26,11 @@ public class ExportController {
         int maxCs = maxCodesets != null ? maxCodesets : 0;
         boolean useDefaults = allVersions == null && maxCodesets == null;
 
+        // ForkJoinPool common-pool threads don't inherit the fat-jar classloader;
+        // Hessian then resolves gov.cdc DTOs as HashMap. Pin the TCCL for the task.
+        ClassLoader appClassLoader = getClass().getClassLoader();
         CompletableFuture.runAsync(() -> {
+            Thread.currentThread().setContextClassLoader(appClassLoader);
             if (useDefaults) {
                 exportService.runFullExport();
             } else {

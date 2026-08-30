@@ -49,6 +49,7 @@ public class SecurityConfig {
 //                );
 ////                .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class); // Add JWT filter
 
+        http.csrf(csrf -> csrf.disable());
         http.authorizeHttpRequests(authorize -> authorize.requestMatchers("/**").permitAll());
         return  http.build();
 

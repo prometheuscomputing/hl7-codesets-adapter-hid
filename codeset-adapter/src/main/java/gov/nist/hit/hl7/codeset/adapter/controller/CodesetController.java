@@ -1,18 +1,19 @@
 package gov.nist.hit.hl7.codeset.adapter.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import gov.nist.hit.hl7.codeset.adapter.exception.NotFoundException;
-import gov.nist.hit.hl7.codeset.adapter.model.Codeset;
-import gov.nist.hit.hl7.codeset.adapter.model.request.CodesetRequest;
 import gov.nist.hit.hl7.codeset.adapter.model.request.CodesetSearchCriteria;
 import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetMetadataResponse;
 import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetResponse;
 import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetVersionMetadataResponse;
 import gov.nist.hit.hl7.codeset.adapter.model.response.ProvidersResponse;
+import gov.nist.hit.hl7.codeset.adapter.service.CodesetResponseCache;
 import gov.nist.hit.hl7.codeset.adapter.serviceImpl.CodesetServiceImpl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
@@ -22,9 +23,16 @@ import java.util.List;
 @RequestMapping("/api/v1")
 public class CodesetController {
     private final CodesetServiceImpl codesetService;
+    private final CodesetResponseCache responseCache;
+    private final ObjectMapper objectMapper;
 
-    public CodesetController(CodesetServiceImpl codesetService) {
+    public CodesetController(CodesetServiceImpl codesetService, CodesetResponseCache responseCache, ObjectMapper objectMapper) {
         this.codesetService = codesetService;
+        this.responseCache = responseCache;
+        // The MVC converter in this app writes dates as epoch millis while the
+        // injected mapper writes ISO strings; the consumers parse the millis
+        // form, so the cached bytes have to match it.
+        this.objectMapper = objectMapper.copy().enable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
     @GetMapping("/providers")
     public ResponseEntity<List<ProvidersResponse>> getProviders() throws IOException {
@@ -50,10 +58,30 @@ public class CodesetController {
     }
 
     @GetMapping("/{provider}/codesets/{id}")
-    public ResponseEntity<CodesetResponse> getCodeset(@PathVariable String provider,@PathVariable String id, @ModelAttribute CodesetSearchCriteria criteria) throws IOException, NotFoundException {
+    public ResponseEntity<byte[]> getCodeset(@PathVariable String provider,@PathVariable String id, @ModelAttribute CodesetSearchCriteria criteria) throws IOException, NotFoundException {
+        // A match query is a point lookup and stays cheap; only whole-set
+        // responses are worth keeping, and they are what the validators pull
+        // on every message.
+        boolean cacheable = criteria.getMatch() == null;
+        String key = provider.toLowerCase() + "|" + id + "|" + (criteria.getVersion() == null ? "latest" : criteria.getVersion());
+        if (cacheable) {
+            byte[] cached = responseCache.get(key);
+            if (cached != null) {
+                return json(cached);
+            }
+        }
         CodesetResponse codeset = codesetService.getCodeset(provider, id, criteria);
-        return new ResponseEntity<>(codeset, HttpStatus.OK);
+        byte[] body = objectMapper.writeValueAsBytes(codeset);
+        if (cacheable) {
+            responseCache.put(key, body);
+        }
+        return json(body);
     }
 
+    private ResponseEntity<byte[]> json(byte[] body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return new ResponseEntity<>(body, headers, HttpStatus.OK);
+    }
 
 }
