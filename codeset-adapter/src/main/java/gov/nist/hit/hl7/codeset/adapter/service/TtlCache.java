@@ -1,5 +1,8 @@
 package gov.nist.hit.hl7.codeset.adapter.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -10,15 +13,18 @@ import java.util.function.ToLongFunction;
  *
  * Null values are never stored, so a miss or a failed load is retried on the
  * next call rather than remembered. Loads for the same key are serialised
- * (on a fixed set of striped locks, so unknown keys cannot grow anything) so
- * a burst of lookups against a cold key fetches the underlying data once.
- * The cache is bounded by entry count and, optionally, by a weight budget
- * (bytes, codes, whatever the caller measures); when either is exceeded
- * everything is dropped. The callers keep a handful of keys, so tracking
- * recency is not worth the code.
+ * on a fixed set of striped locks, so a burst of lookups against a cold key
+ * fetches the underlying data once and unknown keys cannot grow anything;
+ * the price is that two cold keys on the same stripe (1 in 64) load one
+ * after the other. The cache is bounded by entry count and, optionally, by
+ * a weight budget (bytes, codes, whatever the caller measures); when either
+ * would be exceeded everything is dropped and the new entry stored, so a
+ * single entry larger than the budget is still kept on its own. The
+ * callers keep a handful of keys, so tracking recency is not worth the code.
  */
 public final class TtlCache<K, V> {
 
+    private static final Logger log = LoggerFactory.getLogger(TtlCache.class);
     private static final int STRIPES = 64;
 
     private final long ttlMillis;
@@ -63,13 +69,25 @@ public final class TtlCache<K, V> {
         synchronized (this) {
             Entry<V> previous = entries.get(key);
             long previousWeight = previous == null ? 0 : previous.weight;
-            if (entries.size() >= maxEntries || weight - previousWeight + w > maxWeight) {
+            boolean full = previous == null && entries.size() >= maxEntries;
+            boolean overBudget = weight - previousWeight + w > maxWeight;
+            if (full || overBudget) {
+                log.warn("Cache dropped {} entries (weight {}) to admit an entry of weight {}; budget {} entries / {} weight. Raise the budget if this repeats.",
+                        entries.size(), weight, w, maxEntries, maxWeight);
                 entries.clear();
                 weight = 0;
                 previousWeight = 0;
             }
             entries.put(key, new Entry<>(value, w));
             weight += w - previousWeight;
+        }
+    }
+
+    /** Forgets one key so the next call loads it again. */
+    public synchronized void invalidate(K key) {
+        Entry<V> e = entries.remove(key);
+        if (e != null) {
+            weight -= e.weight;
         }
     }
 

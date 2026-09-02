@@ -67,10 +67,6 @@ public class CodeIndexCache {
         return entry.byValue.getOrDefault(match, Collections.emptyList());
     }
 
-    public void clear() {
-        index.clear();
-    }
-
     private Entry entry(String key, Supplier<List<Code>> wholeSetLoader) {
         return index.computeIfAbsent(key, () -> build(key, wholeSetLoader.get()));
     }

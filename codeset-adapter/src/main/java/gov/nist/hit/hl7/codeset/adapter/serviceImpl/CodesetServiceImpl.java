@@ -12,7 +12,6 @@ import gov.nist.hit.hl7.codeset.adapter.service.CodeIndexCache;
 import gov.nist.hit.hl7.codeset.adapter.service.CodesetService;
 import gov.nist.hit.hl7.codeset.adapter.service.ProviderService;
 import org.bson.Document;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.*;
 import org.springframework.data.mongodb.core.query.Criteria;

@@ -73,6 +73,51 @@ public class TtlCacheTest {
     }
 
     @Test
+    public void replacingAKeyDoesNotDoubleCountItsWeight() {
+        TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 64, String::length, 10);
+        cache.put("a", "123456");
+        cache.put("a", "123456");
+        cache.put("b", "1234");
+        assertEquals("123456", cache.get("a"), "6 + 4 fits the budget of 10 when a is counted once");
+        assertEquals("1234", cache.get("b"));
+    }
+
+    @Test
+    public void invalidateForgetsOneKeyAndReturnsItsWeight() {
+        TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 64, String::length, 10);
+        cache.put("a", "123456");
+        cache.invalidate("a");
+        assertNull(cache.get("a"));
+        cache.put("b", "1234567890");
+        assertEquals("1234567890", cache.get("b"), "the full budget is available again");
+    }
+
+    @Test
+    public void aBurstOnAColdKeyLoadsOnce() throws Exception {
+        TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 64);
+        AtomicInteger loads = new AtomicInteger();
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<Thread> threads = new java.util.ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            Thread t = new Thread(() -> {
+                try { go.await(); } catch (InterruptedException e) { return; }
+                cache.computeIfAbsent("k", () -> {
+                    loads.incrementAndGet();
+                    try { Thread.sleep(50); } catch (InterruptedException e) { }
+                    return "v";
+                });
+            });
+            t.start();
+            threads.add(t);
+        }
+        go.countDown();
+        for (Thread t : threads) {
+            t.join();
+        }
+        assertEquals(1, loads.get());
+    }
+
+    @Test
     public void dropsEverythingWhenFull() {
         TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 2);
         cache.put("a", "1");

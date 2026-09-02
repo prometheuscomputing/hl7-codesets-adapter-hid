@@ -104,9 +104,30 @@ public class PhinvadsServiceImplMemoTest {
         assertSame(v6, svc.getValuesetVersion(OID, "6"));
         assertSame(v6, svc.getValuesetVersion(OID, "6"));
         assertSame(v5, svc.getValuesetVersion(OID, "5"));
-        assertNull(svc.getValuesetVersion(OID, "9"));
         assertEquals(List.of(v5, v6), svc.getValuesetVersions(OID));
         verify(cdc, times(1)).findValueSetVersions(any(), anyInt(), anyInt());
+
+        // An unknown version is checked against PHIN VADS once more (it may
+        // have been published since), then the refreshed list is kept.
+        assertNull(svc.getValuesetVersion(OID, "9"));
+        assertEquals(List.of(v5, v6), svc.getValuesetVersions(OID));
+        verify(cdc, times(2)).findValueSetVersions(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void aVersionMissingFromTheRememberedListIsLookedUpAgainOnce() throws Exception {
+        VocabService cdc = mock(VocabService.class);
+        ValueSetVersion v6 = version(OID, 6);
+        ValueSetVersion v7 = version(OID, 7);
+        when(cdc.findValueSetVersions(any(), anyInt(), anyInt()))
+                .thenReturn(versionResult(v6))
+                .thenReturn(versionResult(v6, v7));
+        PhinvadsServiceImpl svc = service(cdc, 24);
+
+        assertSame(v6, svc.getValuesetVersion(OID, "6"));
+        assertSame(v7, svc.getValuesetVersion(OID, "7"), "a version published after the list was remembered is found");
+        assertSame(v7, svc.getValuesetVersion(OID, "7"));
+        verify(cdc, times(2)).findValueSetVersions(any(), anyInt(), anyInt());
     }
 
     @Test

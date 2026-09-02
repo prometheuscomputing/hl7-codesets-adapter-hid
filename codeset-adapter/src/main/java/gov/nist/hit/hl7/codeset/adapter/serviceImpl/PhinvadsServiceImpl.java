@@ -67,6 +67,12 @@ public class PhinvadsServiceImpl implements ProviderService {
     private final TtlCache<String, List<ValueSetVersion>> versionsMemo;
     private final TtlCache<String, String> latestVersionMemo;
     private final TtlCache<String, CodeSystem> codeSystemMemo;
+    private final Object[] importLocks = new Object[64];
+    {
+        for (int i = 0; i < importLocks.length; i++) {
+            importLocks[i] = new Object();
+        }
+    }
 
 
     @Autowired
@@ -332,7 +338,18 @@ public class PhinvadsServiceImpl implements ProviderService {
     }
 
     public ValueSetVersion getValuesetVersion(String id, String version) {
-        return getValuesetVersions(id).stream()
+        ValueSetVersion found = findVersion(getValuesetVersions(id), version);
+        if (found == null) {
+            // A version the remembered list does not know may have been
+            // published since; ask once more before calling it unknown.
+            versionsMemo.invalidate(id);
+            found = findVersion(getValuesetVersions(id), version);
+        }
+        return found;
+    }
+
+    private static ValueSetVersion findVersion(List<ValueSetVersion> versions, String version) {
+        return versions.stream()
                 .filter(v -> String.valueOf(v.getVersionNumber()).equals(version))
                 .findFirst().orElse(null);
     }
@@ -371,33 +388,32 @@ public class PhinvadsServiceImpl implements ProviderService {
 
     @Override
     public void getCodesetAndSave(String id, String version) throws IOException {
-        // Two callers preparing the same version at once (a boot-time warm-up
-        // and the first request, say) would both find it PENDING and both
-        // import its codes. One at a time per version.
-        synchronized (importLocks[Math.floorMod((id + "|" + version).hashCode(), importLocks.length)]) {
-            getCodesetAndSaveLocked(id, version);
-        }
-    }
-
-    private final Object[] importLocks = new Object[64];
-    {
-        for (int i = 0; i < importLocks.length; i++) {
-            importLocks[i] = new Object();
-        }
-    }
-
-    private void getCodesetAndSaveLocked(String id, String version) throws IOException {
         try {
+            // Metadata first, outside any lock: on a cold memo during a CDC
+            // outage these calls time out, and callers should do that side
+            // by side rather than queue behind one another.
             ValueSet valueset = getValueset(id);
             if (valueset == null) {
                 return;
             }
-
             ValueSetVersion valuesetVersion = getValuesetVersion(id, version);
             if (valuesetVersion == null) {
                 return;
             }
+            // Two callers preparing the same version at once (a boot-time
+            // warm-up and the first request, say) would both find it PENDING
+            // and both import its codes. One at a time per version; the
+            // status is re-read inside the lock.
+            synchronized (importLocks[Math.floorMod((id + "|" + version).hashCode(), importLocks.length)]) {
+                saveLocked(id, version, valueset, valuesetVersion);
+            }
+        } catch (Exception e) {
+            log.warn("PHIN VADS metadata for {} v{} could not be refreshed: {}", id, version, e.getMessage());
+        }
+    }
 
+    private void saveLocked(String id, String version, ValueSet valueset, ValueSetVersion valuesetVersion) throws IOException {
+        {
             Codeset codeset = codesetRepository.findByIdentifier(id).orElse(null);
             if (codeset == null) {
                 codeset = new Codeset();
@@ -442,10 +458,7 @@ public class PhinvadsServiceImpl implements ProviderService {
                     mongoOps.save(codesetVersion);
                 }
             }
-        } catch (Exception e) {
-            log.warn("PHIN VADS metadata for {} v{} could not be refreshed: {}", id, version, e.getMessage());
         }
-
     }
 
     @Override
