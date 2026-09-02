@@ -22,9 +22,11 @@ import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetVersionMetadataRes
 import gov.nist.hit.hl7.codeset.adapter.repository.CodesetRepository;
 import gov.nist.hit.hl7.codeset.adapter.repository.CodesetVersionRepository;
 import gov.nist.hit.hl7.codeset.adapter.service.ProviderService;
+import gov.nist.hit.hl7.codeset.adapter.service.TtlCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -55,10 +57,41 @@ public class PhinvadsServiceImpl implements ProviderService {
 
     private final CodesetVersionRepository codesetVersionRepository;
 
+    // PHIN VADS metadata (value set, its versions, the latest version number,
+    // code systems) is asked for on every code lookup the validators make but
+    // only changes when CDC publishes. Remembering it for a while turns those
+    // Hessian round trips into map hits. Misses and failures are never
+    // remembered, so an outage recovers on its own.
+    private static final int MEMO_ENTRIES = 4096;
+    private final TtlCache<String, ValueSet> valueSetMemo;
+    private final TtlCache<String, List<ValueSetVersion>> versionsMemo;
+    private final TtlCache<String, String> latestVersionMemo;
+    private final TtlCache<String, CodeSystem> codeSystemMemo;
 
-    public PhinvadsServiceImpl(CodesetRepository codesetRepository, CodesetVersionRepository codesetVersionRepository) throws NoSuchAlgorithmException, KeyManagementException {
+
+    @Autowired
+    public PhinvadsServiceImpl(CodesetRepository codesetRepository, CodesetVersionRepository codesetVersionRepository,
+                               @Value("${codeset.metadata-cache.ttl-hours:24}") long metadataTtlHours) throws NoSuchAlgorithmException, KeyManagementException {
+        this(codesetRepository, codesetVersionRepository, createPhinvadsProxy(), metadataTtlHours);
+    }
+
+    /**
+     * Wiring seam: the PHIN VADS client is passed in so the metadata memo can
+     * be exercised without the network.
+     */
+    PhinvadsServiceImpl(CodesetRepository codesetRepository, CodesetVersionRepository codesetVersionRepository,
+                        VocabService service, long metadataTtlHours) {
         this.codesetRepository = codesetRepository;
         this.codesetVersionRepository = codesetVersionRepository;
+        this.service = service;
+        long ttlMillis = metadataTtlHours * 3_600_000L;
+        this.valueSetMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
+        this.versionsMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
+        this.latestVersionMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
+        this.codeSystemMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
+    }
+
+    private static VocabService createPhinvadsProxy() throws NoSuchAlgorithmException, KeyManagementException {
         String serviceUrl = "https://phinvads.cdc.gov/vocabService/v2";
         /* Start of Fix */
         TrustManager[] trustAllCerts = new TrustManager[]{new X509TrustManager() {
@@ -91,12 +124,10 @@ public class PhinvadsServiceImpl implements ProviderService {
             // Install the all-trusting host verifier
             HttpsURLConnection.setDefaultHostnameVerifier(allHostsValid);
             /* End of the fix*/
-            this.service = (VocabService) factory.create(VocabService.class, serviceUrl);
-//			mongoOps = new MongoTemplate(new SimpleMongoDbFactory(new MongoClient(), "vocabulary-service"));
+            return (VocabService) factory.create(VocabService.class, serviceUrl);
         } catch (MalformedURLException e) {
-            e.printStackTrace();
+            throw new IllegalStateException("Bad PHIN VADS service URL: " + serviceUrl, e);
         }
-
     }
 
     public VocabService getService() {
@@ -232,15 +263,22 @@ public class PhinvadsServiceImpl implements ProviderService {
 
     @Override
     public String getLatestVersion(String id) throws IOException {
+        String remembered = latestVersionMemo.get(id);
+        if (remembered != null) {
+            return remembered;
+        }
         try {
             ValueSetVersionSearchCriteriaDto criteria = new ValueSetVersionSearchCriteriaDto();
             criteria.setOidSearch(true);
             criteria.setSearchText(id);
             criteria.setSearchType(1);
             criteria.setVersionOption(3);
+            log.debug("PHIN VADS findValueSetVersions (latest) for {}", id);
             ValueSetVersionResultDto valuesetVersionDto = this.service.findValueSetVersions(criteria, 1, Integer.MAX_VALUE);
             ValueSetVersion valuesetVersion = valuesetVersionDto.getValueSetVersions().stream().filter(v -> v.getValueSetOid().equals(id)).findFirst().orElse(null);
-            return (valuesetVersion != null) ? String.valueOf(valuesetVersion.getVersionNumber()) : null;
+            String latest = (valuesetVersion != null) ? String.valueOf(valuesetVersion.getVersionNumber()) : null;
+            latestVersionMemo.put(id, latest);
+            return latest;
         } catch (Exception e) {
             log.warn("PHINVADS unreachable for getLatestVersion({}), trying fallbacks: {}", id, e.getMessage());
 
@@ -278,54 +316,58 @@ public class PhinvadsServiceImpl implements ProviderService {
 
     public ValueSet getValueset(String id)  {
         try {
-            ValueSetSearchCriteriaDto criteria = new ValueSetSearchCriteriaDto();
-            criteria.setOidSearch(true);
-            criteria.setSearchText(id);
-            criteria.setSearchType(1);
-            ValueSetResultDto valuesetDto = this.service.findValueSets(criteria, 1, 1);
-            return valuesetDto.getValueSet();
+            return valueSetMemo.computeIfAbsent(id, () -> {
+                ValueSetSearchCriteriaDto criteria = new ValueSetSearchCriteriaDto();
+                criteria.setOidSearch(true);
+                criteria.setSearchText(id);
+                criteria.setSearchType(1);
+                log.debug("PHIN VADS findValueSets for {}", id);
+                ValueSetResultDto valuesetDto = this.service.findValueSets(criteria, 1, 1);
+                return valuesetDto.getValueSet();
+            });
         } catch (Exception e) {
-            System.out.println("************ Error loading PHINVADS Service: " + e.getMessage());
+            log.warn("PHIN VADS findValueSets failed for {}: {}", id, e.getMessage());
             return null;
         }
 
     }
 
     public ValueSetVersion getValuesetVersion(String id, String version) {
-        ValueSetVersionSearchCriteriaDto criteria = new ValueSetVersionSearchCriteriaDto();
-        criteria.setOidSearch(true);
-        criteria.setSearchText(id);
-        criteria.setSearchType(1);
-        criteria.setVersionOption(1);
-        ValueSetVersionResultDto valuesetDto = this.service.findValueSetVersions(criteria, 1, Integer.MAX_VALUE);
-        List<ValueSetVersion> valuesets = valuesetDto.getValueSetVersions();
-        ValueSetVersion valuesetVersion = valuesets.stream().filter(v -> String.valueOf(v.getVersionNumber()).equals(version) && v.getValueSetOid().equals(id)).findFirst().orElse(null);
-        return valuesetVersion;
+        return getValuesetVersions(id).stream()
+                .filter(v -> String.valueOf(v.getVersionNumber()).equals(version))
+                .findFirst().orElse(null);
     }
 
     public List<ValueSetVersion> getValuesetVersions(String id) {
-        ValueSetVersionSearchCriteriaDto criteria = new ValueSetVersionSearchCriteriaDto();
-        criteria.setOidSearch(true);
-        criteria.setSearchText(id);
-        criteria.setSearchType(1);
-        criteria.setVersionOption(1);
-        ValueSetVersionResultDto valuesetDto = this.service.findValueSetVersions(criteria, 1, Integer.MAX_VALUE);
-        List<ValueSetVersion> valuesetVersions = valuesetDto.getValueSetVersions().stream().filter(v -> v.getValueSetOid().equals(id)).toList();
-        return valuesetVersions;
+        List<ValueSetVersion> versions = versionsMemo.computeIfAbsent(id, () -> {
+            ValueSetVersionSearchCriteriaDto criteria = new ValueSetVersionSearchCriteriaDto();
+            criteria.setOidSearch(true);
+            criteria.setSearchText(id);
+            criteria.setSearchType(1);
+            criteria.setVersionOption(1);
+            log.debug("PHIN VADS findValueSetVersions for {}", id);
+            ValueSetVersionResultDto valuesetDto = this.service.findValueSetVersions(criteria, 1, Integer.MAX_VALUE);
+            List<ValueSetVersion> ofThisSet = valuesetDto.getValueSetVersions().stream().filter(v -> v.getValueSetOid().equals(id)).toList();
+            // An unknown set is a miss, not a fact worth remembering.
+            return ofThisSet.isEmpty() ? null : ofThisSet;
+        });
+        return versions == null ? Collections.emptyList() : versions;
     }
 
     public CodeSystem getCodeSystem(String codeSystemOid) {
-        CodeSystemSearchCriteriaDto csSearchCritDto = new CodeSystemSearchCriteriaDto();
-        csSearchCritDto.setCodeSearch(false);
-        csSearchCritDto.setNameSearch(false);
-        csSearchCritDto.setOidSearch(true);
-        csSearchCritDto.setDefinitionSearch(false);
-        csSearchCritDto.setAssigningAuthoritySearch(false);
-        csSearchCritDto.setTable396Search(false);
-        csSearchCritDto.setSearchType(1);
-        csSearchCritDto.setSearchText(codeSystemOid);
-        CodeSystem cs = this.service.findCodeSystems(csSearchCritDto, 1, 5).getCodeSystems().get(0);
-        return cs;
+        return codeSystemMemo.computeIfAbsent(codeSystemOid, () -> {
+            CodeSystemSearchCriteriaDto csSearchCritDto = new CodeSystemSearchCriteriaDto();
+            csSearchCritDto.setCodeSearch(false);
+            csSearchCritDto.setNameSearch(false);
+            csSearchCritDto.setOidSearch(true);
+            csSearchCritDto.setDefinitionSearch(false);
+            csSearchCritDto.setAssigningAuthoritySearch(false);
+            csSearchCritDto.setTable396Search(false);
+            csSearchCritDto.setSearchType(1);
+            csSearchCritDto.setSearchText(codeSystemOid);
+            log.debug("PHIN VADS findCodeSystems for {}", codeSystemOid);
+            return this.service.findCodeSystems(csSearchCritDto, 1, 5).getCodeSystems().get(0);
+        });
     }
 
     @Override
@@ -386,8 +428,7 @@ public class PhinvadsServiceImpl implements ProviderService {
                 }
             }
         } catch (Exception e) {
-            System.out.println("************ Error loading PHINVADS Service: " + e.getMessage());
-//            throw new RuntimeException(e);
+            log.warn("PHIN VADS metadata for {} v{} could not be refreshed: {}", id, version, e.getMessage());
         }
 
     }

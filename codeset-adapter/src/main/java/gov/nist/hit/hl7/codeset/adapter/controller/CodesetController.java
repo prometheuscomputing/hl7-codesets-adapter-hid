@@ -10,6 +10,8 @@ import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetVersionMetadataRes
 import gov.nist.hit.hl7.codeset.adapter.model.response.ProvidersResponse;
 import gov.nist.hit.hl7.codeset.adapter.service.CodesetResponseCache;
 import gov.nist.hit.hl7.codeset.adapter.serviceImpl.CodesetServiceImpl;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -22,6 +24,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1")
 public class CodesetController {
+    private static final Logger log = LoggerFactory.getLogger(CodesetController.class);
     private final CodesetServiceImpl codesetService;
     private final CodesetResponseCache responseCache;
     private final ObjectMapper objectMapper;
@@ -64,9 +67,11 @@ public class CodesetController {
         // on every message.
         boolean cacheable = criteria.getMatch() == null;
         String key = provider.toLowerCase() + "|" + id + "|" + (criteria.getVersion() == null ? "latest" : criteria.getVersion());
+        long started = System.currentTimeMillis();
         if (cacheable) {
             byte[] cached = responseCache.get(key);
             if (cached != null) {
+                log.debug("Whole set {} served from cache, {} bytes", key, cached.length);
                 return json(cached);
             }
         }
@@ -74,6 +79,10 @@ public class CodesetController {
         byte[] body = objectMapper.writeValueAsBytes(codeset);
         if (cacheable) {
             responseCache.put(key, body);
+            log.info("Whole set {} built, {} bytes, {} ms", key, body.length, System.currentTimeMillis() - started);
+        } else {
+            log.info("Lookup {} match={} hits={} {} ms", key, criteria.getMatch(),
+                    codeset.getCodes() == null ? 0 : codeset.getCodes().size(), System.currentTimeMillis() - started);
         }
         return json(body);
     }
