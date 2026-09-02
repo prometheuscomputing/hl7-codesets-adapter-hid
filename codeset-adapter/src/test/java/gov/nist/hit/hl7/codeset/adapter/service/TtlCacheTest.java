@@ -2,6 +2,9 @@ package gov.nist.hit.hl7.codeset.adapter.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -96,8 +99,8 @@ public class TtlCacheTest {
     public void aBurstOnAColdKeyLoadsOnce() throws Exception {
         TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 64);
         AtomicInteger loads = new AtomicInteger();
-        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
-        java.util.List<Thread> threads = new java.util.ArrayList<>();
+        CountDownLatch go = new CountDownLatch(1);
+        List<Thread> threads = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
             Thread t = new Thread(() -> {
                 try { go.await(); } catch (InterruptedException e) { return; }

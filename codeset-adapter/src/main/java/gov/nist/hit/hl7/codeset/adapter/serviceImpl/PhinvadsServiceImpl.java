@@ -408,55 +408,53 @@ public class PhinvadsServiceImpl implements ProviderService {
                 saveLocked(id, version, valueset, valuesetVersion);
             }
         } catch (Exception e) {
-            log.warn("PHIN VADS metadata for {} v{} could not be refreshed: {}", id, version, e.getMessage());
+            log.warn("Could not prepare {} v{} (PHIN VADS metadata or local import): {}", id, version, e.getMessage());
         }
     }
 
     private void saveLocked(String id, String version, ValueSet valueset, ValueSetVersion valuesetVersion) throws IOException {
-        {
-            Codeset codeset = codesetRepository.findByIdentifier(id).orElse(null);
-            if (codeset == null) {
-                codeset = new Codeset();
-                codeset.setIdentifier(id);
-                codeset.setVersions(new ArrayList<VersionMetadata>());
-                codeset.setName(valueset.getCode());
-                codeset.setDescription(valueset.getName());
-                codeset.setProvider("phinvads");
-                codeset.setDateUpdated(valueset.getStatusDate());
-                codeset.setCodeSetVersions(new HashSet<CodesetVersion>());
-                codeset = mongoOps.save(codeset);
-            }
-            CodesetVersion codesetVersion = codesetVersionRepository.findByCodesetIdAndVersion(codeset.getId(), version).orElse(null);
-            if (codesetVersion == null) {
-                codesetVersion = createNewCodesetVersion(codeset, valuesetVersion, true);
-                mongoOps.save(codeset);
-            } else {
-                if (codesetVersion.getCodesStatus() == null || codesetVersion.getCodesStatus().equals(CodesetVersion.CodesStatus.PENDING)) {
-                    List<ValueSetConcept> valueSetConcepts = this.service
-                            .getValueSetConceptsByValueSetVersionId(valuesetVersion.getId(), 1, Integer.MAX_VALUE)
-                            .getValueSetConcepts();
-                    // Get code systems and save all codes
-                    Set<String> codeSystemOids = new HashSet<>();
-                    Map<String, CodeSystem> uniqueIdCodeSystemMap = new HashMap<>();
-                    List<Code> codes = new ArrayList<Code>();
-                    for (ValueSetConcept pcode : valueSetConcepts) {
-                        if (uniqueIdCodeSystemMap.get(pcode.getCodeSystemOid()) == null) {
-                            CodeSystem cs = getCodeSystem(pcode.getCodeSystemOid());
-                            uniqueIdCodeSystemMap.put(pcode.getCodeSystemOid(), cs);
-                        }
-                        Code code = new Code();
-                        code.setValue(pcode.getConceptCode());
-                        code.setDescription(pcode.getCodeSystemConceptName());
-                        code.setComments(pcode.getDefinitionText());
-//                    code.setUsage("R");
-                        code.setCodeSystem(uniqueIdCodeSystemMap.get(pcode.getCodeSystemOid()).getHl70396Identifier());
-                        code.setCodesetversionId(codesetVersion.getId());
-                        codes.add(code);
-                        codesetVersion.setCodesStatus(CodesetVersion.CodesStatus.SAVED);
+        Codeset codeset = codesetRepository.findByIdentifier(id).orElse(null);
+        if (codeset == null) {
+            codeset = new Codeset();
+            codeset.setIdentifier(id);
+            codeset.setVersions(new ArrayList<VersionMetadata>());
+            codeset.setName(valueset.getCode());
+            codeset.setDescription(valueset.getName());
+            codeset.setProvider("phinvads");
+            codeset.setDateUpdated(valueset.getStatusDate());
+            codeset.setCodeSetVersions(new HashSet<CodesetVersion>());
+            codeset = mongoOps.save(codeset);
+        }
+        CodesetVersion codesetVersion = codesetVersionRepository.findByCodesetIdAndVersion(codeset.getId(), version).orElse(null);
+        if (codesetVersion == null) {
+            codesetVersion = createNewCodesetVersion(codeset, valuesetVersion, true);
+            mongoOps.save(codeset);
+        } else {
+            if (codesetVersion.getCodesStatus() == null || codesetVersion.getCodesStatus().equals(CodesetVersion.CodesStatus.PENDING)) {
+                List<ValueSetConcept> valueSetConcepts = this.service
+                        .getValueSetConceptsByValueSetVersionId(valuesetVersion.getId(), 1, Integer.MAX_VALUE)
+                        .getValueSetConcepts();
+                // Get code systems and save all codes
+                Set<String> codeSystemOids = new HashSet<>();
+                Map<String, CodeSystem> uniqueIdCodeSystemMap = new HashMap<>();
+                List<Code> codes = new ArrayList<Code>();
+                for (ValueSetConcept pcode : valueSetConcepts) {
+                    if (uniqueIdCodeSystemMap.get(pcode.getCodeSystemOid()) == null) {
+                        CodeSystem cs = getCodeSystem(pcode.getCodeSystemOid());
+                        uniqueIdCodeSystemMap.put(pcode.getCodeSystemOid(), cs);
                     }
-                    mongoOps.insertAll(codes);
-                    mongoOps.save(codesetVersion);
+                    Code code = new Code();
+                    code.setValue(pcode.getConceptCode());
+                    code.setDescription(pcode.getCodeSystemConceptName());
+                    code.setComments(pcode.getDefinitionText());
+//                    code.setUsage("R");
+                    code.setCodeSystem(uniqueIdCodeSystemMap.get(pcode.getCodeSystemOid()).getHl70396Identifier());
+                    code.setCodesetversionId(codesetVersion.getId());
+                    codes.add(code);
+                    codesetVersion.setCodesStatus(CodesetVersion.CodesStatus.SAVED);
                 }
+                mongoOps.insertAll(codes);
+                mongoOps.save(codesetVersion);
             }
         }
     }
