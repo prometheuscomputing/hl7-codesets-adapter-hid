@@ -20,6 +20,7 @@ import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.aggregation.AggregationResults;
 import org.springframework.data.mongodb.core.query.Query;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
@@ -28,6 +29,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,6 +53,7 @@ public class CodesetServiceImplLookupTest {
     private static final class FakeProvider implements ProviderService {
         final List<Code> wholeSet;
         final List<String> getCodesMatches = new ArrayList<>();
+        int failNextLoads = 0;
 
         FakeProvider(List<Code> wholeSet) {
             this.wholeSet = wholeSet;
@@ -60,8 +63,12 @@ public class CodesetServiceImplLookupTest {
         public Provider getProvider() { return new Provider("phinvads", "Phinvads"); }
         public void getCodesetAndSave(String id, String version) { }
         public String getLatestVersion(String id) { return VERSION; }
-        public List<Code> getCodes(String id, String version, String match) {
+        public List<Code> getCodes(String id, String version, String match) throws IOException {
             getCodesMatches.add(match);
+            if (failNextLoads > 0) {
+                failNextLoads--;
+                throw new IOException("cdc down");
+            }
             if (match == null) {
                 return wholeSet;
             }
@@ -157,6 +164,44 @@ public class CodesetServiceImplLookupTest {
         assertTrue(miss.getCodes().isEmpty());
         verify(f.mongo, times(1)).find(any(Query.class), eq(Code.class));
         assertTrue(f.provider.getCodesMatches.isEmpty());
+    }
+
+    @Test
+    public void aFailedWholeSetLoadSurfacesAsIOExceptionAndIsRetriedNextTime() throws Exception {
+        Fixture f = new Fixture(CodesetVersion.CodesStatus.NOT_NEEDED, wholeSet());
+        f.provider.failNextLoads = 1;
+
+        assertThrows(IOException.class, () -> f.service.getCodeset("phinvads", OID, criteria("A01")));
+        CodesetResponse ok = f.service.getCodeset("phinvads", OID, criteria("A01"));
+
+        assertEquals(2, ok.getCodes().size());
+        assertEquals(2, f.provider.getCodesMatches.size(), "the failed load is not remembered; the next lookup loads again");
+    }
+
+    @Test
+    public void unversionedAndVersionedLookupsShareOneIndex() throws Exception {
+        Fixture f = new Fixture(CodesetVersion.CodesStatus.NOT_NEEDED, wholeSet());
+        CodesetSearchCriteria latest = new CodesetSearchCriteria();
+        latest.setMatch("A01");
+
+        CodesetResponse viaLatest = f.service.getCodeset("phinvads", OID, latest);
+        CodesetResponse viaVersion = f.service.getCodeset("phinvads", OID, criteria("A01"));
+
+        assertEquals(2, viaLatest.getCodes().size());
+        assertEquals(2, viaVersion.getCodes().size());
+        assertEquals(Collections.singletonList((String) null), f.provider.getCodesMatches, "resolved to the same version, loaded once");
+    }
+
+    @Test
+    public void wholeSetRequestAndLookupsShareOneLoad() throws Exception {
+        Fixture f = new Fixture(CodesetVersion.CodesStatus.NOT_NEEDED, wholeSet());
+
+        CodesetResponse all = f.service.getCodeset("phinvads", OID, criteria(null));
+        CodesetResponse hit = f.service.getCodeset("phinvads", OID, criteria("B99"));
+
+        assertEquals(4, all.getCodes().size());
+        assertEquals(1, hit.getCodes().size());
+        assertEquals(Collections.singletonList((String) null), f.provider.getCodesMatches);
     }
 
     @Test

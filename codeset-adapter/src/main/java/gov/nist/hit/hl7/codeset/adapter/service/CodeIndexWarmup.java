@@ -16,28 +16,22 @@ import java.util.List;
 /**
  * Loads the code sets the validators bind to as soon as the service is up,
  * so the first validation after a restart does not pay for the whole-set
- * fetch. Runs on its own thread; a set that fails to load is logged and the
- * next one is tried, and every path used here is the same one a real request
- * takes, so nothing is warmed that a request would not build anyway.
+ * fetch. One whole-set request per set fills both the serialized response
+ * cache and the lookup index. Runs on its own thread; a set that fails to
+ * load is logged and the next one is tried, and the path used is the one a
+ * real request takes, so nothing is warmed that a request would not build.
  */
 @Component
 public class CodeIndexWarmup implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(CodeIndexWarmup.class);
-
-    /** A value no code set contains; it forces the index to build without matching anything. */
-    static final String PROBE_CODE = "__warmup__";
-
     private static final String PROVIDER = "phinvads";
 
     private final CodesetController controller;
-    private final CodesetService codesetService;
     private final List<Target> targets;
 
-    public CodeIndexWarmup(CodesetController controller, CodesetService codesetService,
-                           @Value("${codeset.warmup.sets:}") String sets) {
+    public CodeIndexWarmup(CodesetController controller, @Value("${codeset.warmup.sets:}") String sets) {
         this.controller = controller;
-        this.codesetService = codesetService;
         this.targets = parse(sets);
     }
 
@@ -78,20 +72,14 @@ public class CodeIndexWarmup implements ApplicationRunner {
     void warmAll() {
         for (Target target : targets) {
             long started = System.currentTimeMillis();
+            String shown = target.version() == null ? "latest" : target.version();
             try {
                 CodesetSearchCriteria wholeSet = new CodesetSearchCriteria();
                 wholeSet.setVersion(target.version());
                 controller.getCodeset(PROVIDER, target.oid(), wholeSet);
-
-                CodesetSearchCriteria probe = new CodesetSearchCriteria();
-                probe.setVersion(target.version());
-                probe.setMatch(PROBE_CODE);
-                codesetService.getCodeset(PROVIDER, target.oid(), probe);
-
-                log.info("Warmed {} v{} in {} ms", target.oid(), target.version() == null ? "latest" : target.version(),
-                        System.currentTimeMillis() - started);
+                log.info("Warmed {} v{} in {} ms", target.oid(), shown, System.currentTimeMillis() - started);
             } catch (Exception e) {
-                log.warn("Warm-up of {} v{} failed: {}", target.oid(), target.version() == null ? "latest" : target.version(), e.toString());
+                log.warn("Warm-up of {} v{} failed: {}", target.oid(), shown, e.toString());
             }
         }
     }

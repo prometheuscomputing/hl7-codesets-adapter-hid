@@ -61,6 +61,18 @@ public class TtlCacheTest {
     }
 
     @Test
+    public void dropsEverythingWhenTheWeightBudgetIsExceeded() {
+        TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 64, String::length, 10);
+        cache.put("a", "12345");
+        cache.put("b", "1234");
+        assertEquals("12345", cache.get("a"));
+        cache.put("c", "12");
+        assertNull(cache.get("a"));
+        assertNull(cache.get("b"));
+        assertEquals("12", cache.get("c"));
+    }
+
+    @Test
     public void dropsEverythingWhenFull() {
         TtlCache<String, String> cache = new TtlCache<>(3_600_000L, 2);
         cache.put("a", "1");

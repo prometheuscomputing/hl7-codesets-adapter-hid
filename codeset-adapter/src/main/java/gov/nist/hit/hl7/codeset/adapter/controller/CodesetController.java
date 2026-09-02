@@ -78,8 +78,15 @@ public class CodesetController {
         CodesetResponse codeset = codesetService.getCodeset(provider, id, criteria);
         byte[] body = objectMapper.writeValueAsBytes(codeset);
         if (cacheable) {
-            responseCache.put(key, body);
-            log.info("Whole set {} built, {} bytes, {} ms", key, body.length, System.currentTimeMillis() - started);
+            // A set with no codes is almost certainly a failed fetch (the
+            // provider answers an outage with an empty list); keeping it would
+            // serve that failure for the whole TTL.
+            boolean hasCodes = codeset.getCodes() != null && !codeset.getCodes().isEmpty();
+            if (hasCodes) {
+                responseCache.put(key, body);
+            }
+            log.info("Whole set {} built, {} bytes, {} ms{}", key, body.length, System.currentTimeMillis() - started,
+                    hasCodes ? "" : " (empty, not cached)");
         } else {
             log.info("Lookup {} match={} hits={} {} ms", key, criteria.getMatch(),
                     codeset.getCodes() == null ? 0 : codeset.getCodes().size(), System.currentTimeMillis() - started);

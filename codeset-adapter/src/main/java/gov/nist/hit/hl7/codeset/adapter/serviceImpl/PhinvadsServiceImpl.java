@@ -46,7 +46,7 @@ import java.util.*;
 
 public class PhinvadsServiceImpl implements ProviderService {
 
-    private VocabService service;
+    private final VocabService service;
     private static final Logger log = LoggerFactory.getLogger(PhinvadsServiceImpl.class);
     @Autowired
     MongoOperations mongoOps;
@@ -109,6 +109,9 @@ public class PhinvadsServiceImpl implements ProviderService {
 
 
         HessianProxyFactory factory = new HessianProxyFactory();
+        // Bound every call: a hung CDC socket must not park a loader (and the
+        // callers waiting on its key) for good. (3.1.3 has no connect timeout.)
+        factory.setReadTimeout(60_000L);
         try {
             SSLContext sc = SSLContext.getInstance("SSL");
 
@@ -263,22 +266,18 @@ public class PhinvadsServiceImpl implements ProviderService {
 
     @Override
     public String getLatestVersion(String id) throws IOException {
-        String remembered = latestVersionMemo.get(id);
-        if (remembered != null) {
-            return remembered;
-        }
         try {
-            ValueSetVersionSearchCriteriaDto criteria = new ValueSetVersionSearchCriteriaDto();
-            criteria.setOidSearch(true);
-            criteria.setSearchText(id);
-            criteria.setSearchType(1);
-            criteria.setVersionOption(3);
-            log.debug("PHIN VADS findValueSetVersions (latest) for {}", id);
-            ValueSetVersionResultDto valuesetVersionDto = this.service.findValueSetVersions(criteria, 1, Integer.MAX_VALUE);
-            ValueSetVersion valuesetVersion = valuesetVersionDto.getValueSetVersions().stream().filter(v -> v.getValueSetOid().equals(id)).findFirst().orElse(null);
-            String latest = (valuesetVersion != null) ? String.valueOf(valuesetVersion.getVersionNumber()) : null;
-            latestVersionMemo.put(id, latest);
-            return latest;
+            return latestVersionMemo.computeIfAbsent(id, () -> {
+                ValueSetVersionSearchCriteriaDto criteria = new ValueSetVersionSearchCriteriaDto();
+                criteria.setOidSearch(true);
+                criteria.setSearchText(id);
+                criteria.setSearchType(1);
+                criteria.setVersionOption(3);
+                log.debug("PHIN VADS findValueSetVersions (latest) for {}", id);
+                ValueSetVersionResultDto valuesetVersionDto = this.service.findValueSetVersions(criteria, 1, Integer.MAX_VALUE);
+                ValueSetVersion valuesetVersion = valuesetVersionDto.getValueSetVersions().stream().filter(v -> v.getValueSetOid().equals(id)).findFirst().orElse(null);
+                return (valuesetVersion != null) ? String.valueOf(valuesetVersion.getVersionNumber()) : null;
+            });
         } catch (Exception e) {
             log.warn("PHINVADS unreachable for getLatestVersion({}), trying fallbacks: {}", id, e.getMessage());
 
@@ -372,6 +371,22 @@ public class PhinvadsServiceImpl implements ProviderService {
 
     @Override
     public void getCodesetAndSave(String id, String version) throws IOException {
+        // Two callers preparing the same version at once (a boot-time warm-up
+        // and the first request, say) would both find it PENDING and both
+        // import its codes. One at a time per version.
+        synchronized (importLocks[Math.floorMod((id + "|" + version).hashCode(), importLocks.length)]) {
+            getCodesetAndSaveLocked(id, version);
+        }
+    }
+
+    private final Object[] importLocks = new Object[64];
+    {
+        for (int i = 0; i < importLocks.length; i++) {
+            importLocks[i] = new Object();
+        }
+    }
+
+    private void getCodesetAndSaveLocked(String id, String version) throws IOException {
         try {
             ValueSet valueset = getValueset(id);
             if (valueset == null) {

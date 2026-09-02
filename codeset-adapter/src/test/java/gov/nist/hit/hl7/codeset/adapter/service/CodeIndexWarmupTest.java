@@ -37,10 +37,9 @@ public class CodeIndexWarmupTest {
     }
 
     @Test
-    public void warmsTheWholeSetResponseAndTheIndexForEachTarget() throws Exception {
+    public void warmsEachTargetWithOneWholeSetRequest() throws Exception {
         CodesetController controller = mock(CodesetController.class);
-        CodesetService service = mock(CodesetService.class);
-        CodeIndexWarmup warmup = new CodeIndexWarmup(controller, service, "a:6,b");
+        CodeIndexWarmup warmup = new CodeIndexWarmup(controller, "a:6,b");
 
         warmup.warmAll();
 
@@ -49,22 +48,17 @@ public class CodeIndexWarmupTest {
         assertEquals("6", viaController.getAllValues().get(0).getVersion());
         assertNull(viaController.getAllValues().get(0).getMatch());
         assertNull(viaController.getAllValues().get(1).getVersion());
-
-        ArgumentCaptor<CodesetSearchCriteria> viaService = ArgumentCaptor.forClass(CodesetSearchCriteria.class);
-        verify(service, times(2)).getCodeset(eq("phinvads"), any(), viaService.capture());
-        assertEquals(CodeIndexWarmup.PROBE_CODE, viaService.getAllValues().get(0).getMatch());
-        assertEquals("6", viaService.getAllValues().get(0).getVersion());
+        assertNull(viaController.getAllValues().get(1).getMatch());
     }
 
     @Test
     public void oneFailingTargetDoesNotStopTheOthers() throws Exception {
         CodesetController controller = mock(CodesetController.class);
-        CodesetService service = mock(CodesetService.class);
         when(controller.getCodeset(eq("phinvads"), eq("bad"), any())).thenThrow(new RuntimeException("cdc down"));
-        CodeIndexWarmup warmup = new CodeIndexWarmup(controller, service, "bad,good");
+        CodeIndexWarmup warmup = new CodeIndexWarmup(controller, "bad,good");
 
         warmup.warmAll();
 
-        verify(service, times(1)).getCodeset(eq("phinvads"), eq("good"), any());
+        verify(controller, times(1)).getCodeset(eq("phinvads"), eq("good"), any());
     }
 }

@@ -24,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -206,28 +207,28 @@ public class CodesetServiceImpl implements CodesetService {
         String versionId = codesetResponse.getVersion().getId();
         boolean storedLocally = !CodesetVersion.CodesStatus.NOT_NEEDED.equals(codesetVersion.getCodesStatus());
         String match = searchCriteria.getMatch();
+        // `version` is reassigned above; the loader lambda needs a final copy.
         String resolvedVersion = version;
 
-        List<Code> codes;
-        if (match == null) {
-            codes = wholeSet(providerService, id, resolvedVersion, versionId, storedLocally);
-        } else {
-            // A point lookup is answered from the indexed whole set, which is
-            // the same data the whole-set response is built from. The set is
-            // fetched once per version and kept for the cache TTL; a code that
-            // is not in it is simply not in it, and no further search is made.
-            String key = provider.toLowerCase() + "|" + id + "|" + resolvedVersion;
+        // Whole-set responses and point lookups are served from one in-memory
+        // copy of the set, fetched once per version and kept for the cache
+        // TTL. The key carries the resolved version number (not "latest") so
+        // a request without a version and one that names the current version
+        // share the same entry. A code that is not in the set is simply not
+        // in it; no further search is made.
+        String key = provider.toLowerCase() + "|" + id + "|" + resolvedVersion;
+        Supplier<List<Code>> loader = () -> {
             try {
-                codes = codeIndex.lookup(key, match, () -> {
-                    try {
-                        return wholeSet(providerService, id, resolvedVersion, versionId, storedLocally);
-                    } catch (IOException e) {
-                        throw new UncheckedIOException(e);
-                    }
-                });
-            } catch (UncheckedIOException e) {
-                throw e.getCause();
+                return wholeSet(providerService, id, resolvedVersion, versionId, storedLocally);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
             }
+        };
+        List<Code> codes;
+        try {
+            codes = match == null ? codeIndex.all(key, loader) : codeIndex.lookup(key, match, loader);
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         }
         List<CodeResponse> codeResponses = codes.stream()
                 .map(code -> new CodeResponse(code))

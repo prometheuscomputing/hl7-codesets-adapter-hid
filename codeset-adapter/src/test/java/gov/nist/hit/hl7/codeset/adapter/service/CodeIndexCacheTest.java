@@ -74,6 +74,35 @@ public class CodeIndexCacheTest {
     }
 
     @Test
+    public void wholeSetAndLookupsShareOneLoad() {
+        CodeIndexCache index = new CodeIndexCache(3_600_000L);
+        AtomicInteger loads = new AtomicInteger();
+        List<Code> set = wholeSet();
+        List<Code> all = index.all(KEY, () -> { loads.incrementAndGet(); return set; });
+        List<Code> hit = index.lookup(KEY, "B99", () -> { loads.incrementAndGet(); return wholeSet(); });
+        assertEquals(4, all.size());
+        assertSame(set.get(3), hit.get(0));
+        assertEquals(1, loads.get());
+    }
+
+    @Test
+    public void wholeSetKeepsTheLoadedOrder() {
+        CodeIndexCache index = new CodeIndexCache(3_600_000L);
+        List<Code> all = index.all(KEY, CodeIndexCacheTest::wholeSet);
+        assertEquals(List.of("A00", "A01", "A01", "B99"), all.stream().map(Code::getValue).toList());
+    }
+
+    @Test
+    public void tooManyCodesInTotalDropsTheIndex() {
+        CodeIndexCache index = new CodeIndexCache(3_600_000L, 6);
+        AtomicInteger loads = new AtomicInteger();
+        index.lookup("set-1", "A00", () -> { loads.incrementAndGet(); return wholeSet(); });
+        index.lookup("set-2", "A00", () -> { loads.incrementAndGet(); return wholeSet(); });
+        index.lookup("set-1", "A00", () -> { loads.incrementAndGet(); return wholeSet(); });
+        assertEquals(3, loads.get(), "8 codes exceed a budget of 6, so set-1 had to be reloaded");
+    }
+
+    @Test
     public void emptySetsAreNotKept() {
         CodeIndexCache index = new CodeIndexCache(3_600_000L);
         AtomicInteger loads = new AtomicInteger();
