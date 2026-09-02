@@ -4,6 +4,7 @@ import gov.nist.hit.hl7.codeset.adapter.service.CodeIndexCache;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class CacheConfig {
@@ -14,6 +15,6 @@ public class CacheConfig {
      */
     @Bean
     public CodeIndexCache codeIndexCache(@Value("${codeset.response-cache.ttl-hours:6}") long ttlHours) {
-        return new CodeIndexCache(ttlHours * 3_600_000L);
+        return new CodeIndexCache(TimeUnit.HOURS.toMillis(ttlHours));
     }
 }

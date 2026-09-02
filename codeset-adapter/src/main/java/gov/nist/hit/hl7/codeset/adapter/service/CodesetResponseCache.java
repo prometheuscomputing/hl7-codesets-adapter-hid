@@ -2,6 +2,7 @@ package gov.nist.hit.hl7.codeset.adapter.service;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Keeps the serialized JSON of whole-codeset responses in memory.
@@ -23,7 +24,7 @@ public class CodesetResponseCache {
     private final TtlCache<String, byte[]> entries;
 
     public CodesetResponseCache(@Value("${codeset.response-cache.ttl-hours:6}") long ttlHours) {
-        this.entries = new TtlCache<>(ttlHours * 3_600_000L, MAX_ENTRIES, body -> body.length, MAX_BYTES);
+        this.entries = new TtlCache<>(TimeUnit.HOURS.toMillis(ttlHours), MAX_ENTRIES, body -> body.length, MAX_BYTES);
     }
 
     public byte[] get(String key) {

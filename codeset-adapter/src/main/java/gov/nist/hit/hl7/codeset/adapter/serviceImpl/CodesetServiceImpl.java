@@ -45,6 +45,13 @@ public class CodesetServiceImpl implements CodesetService {
     }
 
 
+    private ProviderService provider(String name) {
+        return providerServices.stream()
+                .filter(p -> p.getProvider().getName().equals(name.toLowerCase()))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Provider " + name.toLowerCase() + " not found"));
+    }
+
     @Override
     public List<ProvidersResponse> getProviders() throws IOException {
         List<ProvidersResponse> providers = new ArrayList<ProvidersResponse>();
@@ -76,10 +83,7 @@ public class CodesetServiceImpl implements CodesetService {
 
     @Override
     public CodesetMetadataResponse getCodesetMetadata(String provider, String id) throws IOException, NotFoundException {
-        ProviderService providerService = providerServices.stream()
-                .filter(p -> p.getProvider().getName().equals(provider.toLowerCase()))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Provider " + provider.toLowerCase() + " not found"));
+        ProviderService providerService = provider(provider);
         try {
             CodesetMetadataResponse codesetMetadataResponse = providerService.getCodesetMetadata(id);
             return codesetMetadataResponse;
@@ -127,19 +131,13 @@ public class CodesetServiceImpl implements CodesetService {
 
     @Override
     public CodesetVersionMetadataResponse getCodesetVersionMetadata(String provider, String id, String version) throws IOException, NotFoundException {
-        ProviderService providerService = providerServices.stream()
-                .filter(p -> p.getProvider().getName().equals(provider.toLowerCase()))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Provider " + provider.toLowerCase() + " not found"));
+        ProviderService providerService = provider(provider);
         return providerService.getCodesetVersionMetadata(id, version);
 
     }
 
     public CodesetResponse getCodeset(String provider, String id, CodesetSearchCriteria searchCriteria) throws IOException, NotFoundException {
-        ProviderService providerService = providerServices.stream()
-                .filter(p -> p.getProvider().getName().equals(provider.toLowerCase()))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Provider " + provider.toLowerCase() + " not found"));
+        ProviderService providerService = provider(provider);
 
 
         String version = searchCriteria.getVersion();

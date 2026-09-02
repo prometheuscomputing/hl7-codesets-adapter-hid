@@ -41,6 +41,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 @Service
 
@@ -90,7 +91,7 @@ public class PhinvadsServiceImpl implements ProviderService {
         this.codesetRepository = codesetRepository;
         this.codesetVersionRepository = codesetVersionRepository;
         this.service = service;
-        long ttlMillis = metadataTtlHours * 3_600_000L;
+        long ttlMillis = TimeUnit.HOURS.toMillis(metadataTtlHours);
         this.valueSetMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
         this.versionsMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
         this.latestVersionMemo = new TtlCache<>(ttlMillis, MEMO_ENTRIES);
