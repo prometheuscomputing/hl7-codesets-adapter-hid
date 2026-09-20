@@ -1,16 +1,25 @@
 package gov.nist.hit.hl7.codeset.adapter.model.response;
 
+import gov.nist.hit.hl7.codeset.adapter.model.Code;
+
 public class CodeResponse {
     private String value;
     private String codeSystem;
     private String displayText;
-    private String description;
 
     private boolean isPattern;
     private String regularExpression;
     private String usage;
     public CodeResponse(){
 
+    }
+    public CodeResponse(Code code){
+        this.value = code.getValue();
+        this.codeSystem = code.getCodeSystem();
+        this.displayText = code.getDescription();
+//        this.isPattern = code.pa;
+        this.regularExpression = code.getRegexRule();
+        this.usage = code.getUsage();
     }
     public CodeResponse(String value, String codeSystem, String displayText, boolean isPattern, String regularExpression, String usage) {
         this.value = value;
@@ -38,7 +47,7 @@ public class CodeResponse {
     }
 
     public String getDisplayText() {
-        return description;
+        return displayText;
     }
 
     public void setDisplayText(String displayText) {
@@ -69,11 +78,6 @@ public class CodeResponse {
         this.usage = usage;
     }
 
-    public String getDescription() {
-        return description;
-    }
 
-    public void setDescription(String description) {
-        this.description = description;
-    }
+
 }

@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### PHINVADS Export Data ###
+data/
+codeset-adapter.jar

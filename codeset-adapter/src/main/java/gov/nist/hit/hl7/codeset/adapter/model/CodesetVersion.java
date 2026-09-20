@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.mongodb.core.mapping.DBRef;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.Date;
@@ -16,6 +17,7 @@ import java.util.UUID;
 public class CodesetVersion {
     @Id
     private String id;
+    private String codesetId;
 
     private String version;
 
@@ -31,10 +33,13 @@ public class CodesetVersion {
 
     private String comments;
 
-    private Set<Code> codes;
 
     private boolean deprecated;
-    private Boolean hasPartCodes;
+    private CodesStatus codesStatus;
+
+    public enum CodesStatus {
+        NOT_NEEDED, PENDING, SAVED
+    }
 
     public CodesetVersion() {
         super();
@@ -46,6 +51,14 @@ public class CodesetVersion {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public String getCodesetId() {
+        return codesetId;
+    }
+
+    public void setCodesetId(String codesetId) {
+        this.codesetId = codesetId;
     }
 
     public String getVersion() {
@@ -80,13 +93,7 @@ public class CodesetVersion {
         this.comments = comments;
     }
 
-    public Set<Code> getCodes() {
-        return codes;
-    }
 
-    public void setCodes(Set<Code> codes) {
-        this.codes = codes;
-    }
 
 
     public Date getDateCreated() {
@@ -119,11 +126,11 @@ public class CodesetVersion {
         this.deprecated = deprecated;
     }
 
-    public Boolean getHasPartCodes() {
-        return hasPartCodes;
+    public CodesStatus getCodesStatus() {
+        return codesStatus;
     }
 
-    public void setHasPartCodes(Boolean hasPartCodes) {
-        this.hasPartCodes = hasPartCodes;
+    public void setCodesStatus(CodesStatus codesStatus) {
+        this.codesStatus = codesStatus;
     }
 }

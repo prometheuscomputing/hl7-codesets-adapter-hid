@@ -22,8 +22,7 @@ public class Codeset {
     private String description;
     private String username;
     private String provider;
-    private String phinvadsOid;
-    private Boolean hasPartCodes;
+    private String identifier;
     @DBRef
     private Set<CodesetVersion> codeSetVersions;
 
@@ -104,19 +103,12 @@ public class Codeset {
         this.provider = provider;
     }
 
-    public String getPhinvadsOid() {
-        return phinvadsOid;
+    public String getIdentifier() {
+        return identifier;
     }
 
-    public void setPhinvadsOid(String phinvadsOid) {
-        this.phinvadsOid = phinvadsOid;
+    public void setIdentifier(String identifier) {
+        this.identifier = identifier;
     }
 
-    public Boolean getHasPartCodes() {
-        return hasPartCodes;
-    }
-
-    public void setHasPartCodes(Boolean hasPartCodes) {
-        this.hasPartCodes = hasPartCodes;
-    }
 }

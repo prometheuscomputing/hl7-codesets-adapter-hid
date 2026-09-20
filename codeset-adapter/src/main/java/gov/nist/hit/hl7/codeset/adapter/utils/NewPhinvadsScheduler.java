@@ -31,10 +31,7 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.List;
+import java.util.*;
 
 @Component
 public class NewPhinvadsScheduler {
@@ -151,9 +148,12 @@ public class NewPhinvadsScheduler {
                         && codeset.getLatestVersion().getVersion().equals(String.valueOf(vsv.getVersionNumber()))) {
                     CodesetVersion codesetVersion = mongoOps.findOne(Query.query(Criteria.where("version").is(codeset.getLatestVersion())),
                             CodesetVersion.class);
+
                     if (codesetVersion != null) {
-                        if (codesetVersion.getCodes().size() == 0) {
-                            vscByVSVid = this.getService().getValueSetConceptsByValueSetVersionId(vsv.getId(), 1, 100000);
+                        Code code = mongoOps.findOne(Query.query(Criteria.where("codesetversionId").is(codesetVersion.getId())),
+                                Code.class);
+                        if (code != null) {
+                            vscByVSVid = this.getService().getValueSetConceptsByValueSetVersionId(vsv.getId(), 1, Integer.MAX_VALUE);
                             valueSetConcepts = vscByVSVid.getValueSetConcepts();
                             if (valueSetConcepts.size() != 0) {
                                 needUpdate = true;
@@ -178,7 +178,7 @@ public class NewPhinvadsScheduler {
         // 4. if updated, get full codes from PHINVADs web service
         if (needUpdate) {
             if (vscByVSVid == null)
-                vscByVSVid = this.getService().getValueSetConceptsByValueSetVersionId(vsv.getId(), 1, 10000);
+                vscByVSVid = this.getService().getValueSetConceptsByValueSetVersionId(vsv.getId(), 1, Integer.MAX_VALUE);
             if (valueSetConcepts == null)
                 valueSetConcepts = vscByVSVid.getValueSetConcepts();
 //			if (codeset == null)
@@ -194,51 +194,48 @@ public class NewPhinvadsScheduler {
 
             codesetVersion.setVersion(String.valueOf(vsvByVSOid.get(0).getVersionNumber()));
             codesetVersion.setDateUpdated(vs.getStatusDate());
-            codesetVersion.setCodes(new HashSet<Code>());
 
             codeset.setName(vs.getCode());
             codeset.setDescription(vs.getName());
-            codeset.setPhinvadsOid(vs.getOid());
-            VersionMetadata versionMetadata = new VersionMetadata(String.valueOf(vsvByVSOid.get(0).getVersionNumber()), vs.getStatusDate(), valueSetConcepts.size());
+            codeset.setIdentifier(vs.getOid());
+            VersionMetadata versionMetadata = new VersionMetadata(String.valueOf(vsvByVSOid.get(0).getVersionNumber()), vs.getStatusDate());
             codeset.setLatestVersion(versionMetadata);
             codeset.getVersions().add(versionMetadata);
             codeset.setProvider("phinvads");
             codeset.setDateUpdated(vs.getStatusDate());
             codeset.setCodeSetVersions(new HashSet<CodesetVersion>());
 
-            if (valueSetConcepts.size() > 500) {
-                System.out.println("Number of codes: " + valueSetConcepts.size());
-                codeset.setHasPartCodes(true);
-                codesetVersion.setHasPartCodes(true);
-            } else {
-                codeset.setHasPartCodes(false);
-                codesetVersion.setHasPartCodes(false);
+
+            Set<String> codeSystemOids = new HashSet<>();
+            Map<String, CodeSystem> uniqueIdCodeSystemMap = new HashMap<>();
+            List<Code> codes = new ArrayList<Code>();
+            try {
+                CodesetVersion savedCodesetVersion = mongoOps.save(codesetVersion);
 
                 for (ValueSetConcept pcode : valueSetConcepts) {
-                    CodeSystemSearchCriteriaDto csSearchCritDto = new CodeSystemSearchCriteriaDto();
-                    csSearchCritDto.setCodeSearch(false);
-                    csSearchCritDto.setNameSearch(false);
-                    csSearchCritDto.setOidSearch(true);
-                    csSearchCritDto.setDefinitionSearch(false);
-                    csSearchCritDto.setAssigningAuthoritySearch(false);
-                    csSearchCritDto.setTable396Search(false);
-                    csSearchCritDto.setSearchType(1);
-                    csSearchCritDto.setSearchText(pcode.getCodeSystemOid());
-                    CodeSystem cs = this.getService().findCodeSystems(csSearchCritDto, 1, 5).getCodeSystems().get(0);
+                    if (uniqueIdCodeSystemMap.get(pcode.getCodeSystemOid()) == null) {
+                        CodeSystemSearchCriteriaDto csSearchCritDto = new CodeSystemSearchCriteriaDto();
+                        csSearchCritDto.setCodeSearch(false);
+                        csSearchCritDto.setNameSearch(false);
+                        csSearchCritDto.setOidSearch(true);
+                        csSearchCritDto.setDefinitionSearch(false);
+                        csSearchCritDto.setAssigningAuthoritySearch(false);
+                        csSearchCritDto.setTable396Search(false);
+                        csSearchCritDto.setSearchType(1);
+                        csSearchCritDto.setSearchText(pcode.getCodeSystemOid());
+                        CodeSystem cs = this.getService().findCodeSystems(csSearchCritDto, 1, 5).getCodeSystems().get(0);
+                        uniqueIdCodeSystemMap.put(pcode.getCodeSystemOid(), cs);
+                    }
                     Code code = new Code();
                     code.setValue(pcode.getConceptCode());
                     code.setDescription(pcode.getCodeSystemConceptName());
                     code.setComments(pcode.getDefinitionText());
-//					code.setUsage(CodeUsage.P);
-                    code.setCodeSystem(cs.getHl70396Identifier());
-                    codesetVersion.getCodes().add(code);
+//					code.setUsage("P");
+                    code.setCodeSystem(uniqueIdCodeSystemMap.get(pcode.getCodeSystemOid()).getHl70396Identifier());
+                    code.setCodesetversionId(savedCodesetVersion.getId());
+                    codes.add(code);
                 }
-            }
-
-            // 5. update Codeset on DB
-            try {
-//                codeset = this.fixValueSetDescription(codeset);
-                CodesetVersion savedCodesetVersion = mongoOps.save(codesetVersion);
+                mongoOps.insertAll(codes);
                 codeset.getCodeSetVersions().add(savedCodesetVersion);
                 mongoOps.save(codeset);
                 log.info(vs.getOid() + " Codeset is updated.");
@@ -247,6 +244,9 @@ public class NewPhinvadsScheduler {
                 e.printStackTrace();
                 return null;
             }
+
+
+
             return codeset;
         } else {
             log.info(vs.getOid() + " Codeset is NOT updated.");

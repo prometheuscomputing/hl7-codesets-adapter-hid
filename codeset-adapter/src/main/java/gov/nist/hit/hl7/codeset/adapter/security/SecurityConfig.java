@@ -16,44 +16,47 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
-    private final UserDetailsService jwtUserDetailsService;
-    private final JwtRequestFilter jwtRequestFilter;
-    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+//    private final UserDetailsService jwtUserDetailsService;
+//    private final JwtRequestFilter jwtRequestFilter;
+//    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+//
+//    public SecurityConfig(JwtRequestFilter jwtRequestFilter, UserDetailsService jwtUserDetailsService, JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint) {
+//        this.jwtRequestFilter = jwtRequestFilter;
+//        this.jwtUserDetailsService= jwtUserDetailsService;
+//        this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
+//    }
 
-    public SecurityConfig(JwtRequestFilter jwtRequestFilter, UserDetailsService jwtUserDetailsService, JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint) {
-        this.jwtRequestFilter = jwtRequestFilter;
-        this.jwtUserDetailsService= jwtUserDetailsService;
-        this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+//    @Bean
+//    public PasswordEncoder passwordEncoder() {
+//        return new BCryptPasswordEncoder();
+//    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http.exceptionHandling((exception)-> exception.authenticationEntryPoint(jwtAuthenticationEntryPoint));
+//        http.exceptionHandling((exception)-> exception.authenticationEntryPoint(jwtAuthenticationEntryPoint));
 
-        http.csrf(csrf -> csrf.disable())
-                .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/v1/**").permitAll() // Permit all requests to login endpoint
-                )
+//        http.csrf(csrf -> csrf.disable())
 //                .authorizeHttpRequests(authorize -> authorize
-//                        .requestMatchers("/api/auth/v1/login").permitAll() // Permit all requests to login endpoint
-//                ).authorizeHttpRequests(authorize -> authorize
-//                        .requestMatchers("/api/v1/**").authenticated() // Require authentication for all other /api/v1/** endpoints
+//                        .requestMatchers("/api/v1/**").permitAll() // Permit all requests to login endpoint
 //                )
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS) // Configure stateless session management
-                );
-//                .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class); // Add JWT filter
+////                .authorizeHttpRequests(authorize -> authorize
+////                        .requestMatchers("/api/auth/v1/login").permitAll() // Permit all requests to login endpoint
+////                ).authorizeHttpRequests(authorize -> authorize
+////                        .requestMatchers("/api/v1/**").authenticated() // Require authentication for all other /api/v1/** endpoints
+////                )
+//                .sessionManagement(session -> session
+//                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS) // Configure stateless session management
+//                );
+////                .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class); // Add JWT filter
+
+        http.csrf(csrf -> csrf.disable());
+        http.authorizeHttpRequests(authorize -> authorize.requestMatchers("/**").permitAll());
         return  http.build();
 
     }
 
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
-    }
+//    @Bean
+//    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+//        return config.getAuthenticationManager();
+//    }
 }

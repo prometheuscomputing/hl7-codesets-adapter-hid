@@ -10,7 +10,6 @@ public class CodesetResponse {
 
     private String name;
     private VersionMetadata latestStableVersion;
-    private List<VersionMetadata> versions;
     private List<CodeResponse> codes;
     private String codeMatchValue;
     private VersionDetails version;
@@ -47,13 +46,6 @@ public class CodesetResponse {
         this.latestStableVersion = latestStableVersion;
     }
 
-    public List<VersionMetadata> getVersions() {
-        return versions;
-    }
-
-    public void setVersions(List<VersionMetadata> versions) {
-        this.versions = versions;
-    }
 
     public List<CodeResponse> getCodes() {
         return codes;

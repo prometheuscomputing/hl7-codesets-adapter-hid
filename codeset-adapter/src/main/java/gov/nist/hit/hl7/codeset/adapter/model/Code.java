@@ -2,25 +2,32 @@ package gov.nist.hit.hl7.codeset.adapter.model;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import org.bson.types.ObjectId;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.io.Serializable;
 import java.util.UUID;
-public class Code implements Serializable {
+@Document
+public class Code  {
     /**
      *
      */
-    private static final long serialVersionUID = 3734129200317300616L;
+    @Id
+    private String id;
+    public String codesetversionId;  // Reference to the CodesetVersion
+
     private String value;
     private String description;
     private String codeSystem;
     private String comments;
-    private String id;
     private String display;
+    private String usage;
     private String definition;
     private String v2TableStatus;
     private String deprecated;
     private String v2ConceptComment;
     private String v2ConceptCommentAsPublished;
+
 
     private String codeType;
     private String regexRule;
@@ -36,6 +43,14 @@ public class Code implements Serializable {
         this.description = description;
         this.codeSystem = codeSystem;
         this.comments = comments;
+    }
+
+    public String getCodesetversionId() {
+        return codesetversionId;
+    }
+
+    public void setCodesetversionId(String codesetversionId) {
+        this.codesetversionId = codesetversionId;
     }
 
     public String getValue() {
@@ -84,6 +99,14 @@ public class Code implements Serializable {
 
     public void setDisplay(String display) {
         this.display = display;
+    }
+
+    public String getUsage() {
+        return usage;
+    }
+
+    public void setUsage(String usage) {
+        this.usage = usage;
     }
 
     public String getDefinition() {

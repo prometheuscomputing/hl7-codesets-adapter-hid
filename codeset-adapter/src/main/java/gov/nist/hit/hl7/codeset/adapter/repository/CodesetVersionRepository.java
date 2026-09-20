@@ -8,6 +8,6 @@ import java.util.Optional;
 
 @Repository
 public interface CodesetVersionRepository extends MongoRepository<CodesetVersion, String> {
-    Optional<CodesetVersion> findByIdAndVersion(String codesetId, String version);
+    Optional<CodesetVersion> findByCodesetIdAndVersion(String codesetId, String version);
 
 }

@@ -1,19 +1,17 @@
-version: "3.3"
 services:
   codesets-adapter-db:
-    build: ./codesets-adapter-db
-    image: codesets-adapter-db
+    image: mongo:4.4.29-focal
     networks:
       - codesets-adapter-network
     container_name: codesets-adapter-db
-    hostname: codesets-adapter-db
     expose:
       - "27017"
     healthcheck:
-      test: ["CMD-SHELL", "mongo localhost:27017 --eval db.serverStatus() "]
-      interval: 30s
-      timeout: 30s
-      retries: 3
+      test: ["CMD", "mongo", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     volumes:
       - ../../data/codesets-adapter-db/db:/data/db
     env_file:
@@ -21,8 +19,9 @@ services:
     restart: unless-stopped
 
   codesets-adapter:
-    build: ./codesets-adapter
-    image: codesets-adapter
+    # build: ./codesets-adapter
+    # image: codesets-adapter
+    image: nist775hit/hl7-codeset-adapter-prod
     networks:
       - codesets-adapter-network
     expose:
@@ -31,18 +30,17 @@ services:
       - "19070:8080"
     container_name: codesets-adapter
     depends_on:
-      - codesets-adapter-db
+      codesets-adapter-db:
+        condition: service_healthy
     env_file:
       - ./codesets-adapter-db/config/db.env
-      # - ./codesets-adapter/config/config.env
     links:
       - codesets-adapter-db:codesets-adapter-db
     volumes:
       - ../../data/codesets-adapter/logs/:/var/log/codesets-adapter/
     restart: unless-stopped
 
-
-
 networks:
   codesets-adapter-network:
+    name: codesets-adapter-network
 

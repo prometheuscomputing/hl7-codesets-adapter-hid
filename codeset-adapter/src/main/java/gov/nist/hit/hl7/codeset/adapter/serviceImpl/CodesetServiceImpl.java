@@ -1,15 +1,16 @@
 package gov.nist.hit.hl7.codeset.adapter.serviceImpl;
 
-import gov.nist.hit.hl7.codeset.adapter.model.request.CodesetRequest;
-import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetMetadataResponse;
-import gov.nist.hit.hl7.codeset.adapter.model.response.CodesetResponse;
-import gov.nist.hit.hl7.codeset.adapter.model.response.ProvidersResponse;
-import gov.nist.hit.hl7.codeset.adapter.repository.CodesetRepository;
-import gov.nist.hit.hl7.codeset.adapter.repository.CodesetVersionRepository;
+import gov.nist.hit.hl7.codeset.adapter.exception.NotFoundException;
+import gov.nist.hit.hl7.codeset.adapter.model.Code;
 import gov.nist.hit.hl7.codeset.adapter.model.Codeset;
 import gov.nist.hit.hl7.codeset.adapter.model.CodesetVersion;
+import gov.nist.hit.hl7.codeset.adapter.model.response.*;
+import gov.nist.hit.hl7.codeset.adapter.repository.CodesetRepository;
+import gov.nist.hit.hl7.codeset.adapter.repository.CodesetVersionRepository;
 import gov.nist.hit.hl7.codeset.adapter.model.request.CodesetSearchCriteria;
+import gov.nist.hit.hl7.codeset.adapter.service.CodeIndexCache;
 import gov.nist.hit.hl7.codeset.adapter.service.CodesetService;
+import gov.nist.hit.hl7.codeset.adapter.service.ProviderService;
 import org.bson.Document;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.*;
@@ -20,26 +21,44 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class CodesetServiceImpl implements CodesetService {
     private final CodesetRepository codesetRepository;
     private final CodesetVersionRepository codesetVersionRepository;
     private final MongoTemplate mongoTemplate;
+    private final List<ProviderService> providerServices;
+    private final CodeIndexCache codeIndex;
 
-    public CodesetServiceImpl(CodesetRepository codesetRepository, CodesetVersionRepository codesetVersionRepository, MongoTemplate mongoTemplate) {
+    public CodesetServiceImpl(CodesetRepository codesetRepository, CodesetVersionRepository codesetVersionRepository,
+                              MongoTemplate mongoTemplate, List<ProviderService> providerServices, CodeIndexCache codeIndex) {
         this.codesetRepository = codesetRepository;
         this.codesetVersionRepository = codesetVersionRepository;
         this.mongoTemplate = mongoTemplate;
+        this.providerServices = providerServices;
+        this.codeIndex = codeIndex;
     }
 
+
+    private ProviderService provider(String name) {
+        return providerServices.stream()
+                .filter(p -> p.getProvider().getName().equals(name.toLowerCase()))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Provider " + name.toLowerCase() + " not found"));
+    }
 
     @Override
     public List<ProvidersResponse> getProviders() throws IOException {
         List<ProvidersResponse> providers = new ArrayList<ProvidersResponse>();
-        providers.add(new ProvidersResponse("phinvads", "Phinvads"));
+        providerServices.stream().forEach(p -> {
+            providers.add(new ProvidersResponse(p.getProvider().getName(), p.getProvider().getLabel()));
+
+        });
         return providers;
     }
 
@@ -50,13 +69,10 @@ public class CodesetServiceImpl implements CodesetService {
 
         ProjectionOperation projectionOperation = Aggregation.project()
                 .and("name").as("name")
+                .and("versions").as("versions")
                 .and("latestVersion").as("latestStableVersion");
 
-        if (provider != null && provider.equalsIgnoreCase("phinvads")) {
-            projectionOperation = projectionOperation.and("phinvadsOid").as("identifier");
-        } else {
-
-        }
+        projectionOperation = projectionOperation.and("identifier").as("identifier");
 
 
         // Execute the aggregation
@@ -66,35 +82,33 @@ public class CodesetServiceImpl implements CodesetService {
     }
 
     @Override
-    public CodesetMetadataResponse getCodesetMetadata(String provider, String id) throws IOException {
-        Criteria criteria = new Criteria().andOperator(
-                Criteria.where("provider").regex("^" + Pattern.quote(provider) + "$", "i"), // Adjust "someField" to the actual field for provider
-                Criteria.where("phinvadsOid").is(id)
-        );
-        // Define the aggregation with match and projection
-        MatchOperation matchOperation = Aggregation.match(criteria);
-        ProjectionOperation projectionOperation = Aggregation.project()
-                .and("name").as("name")
-                .and("latestVersion").as("latestStableVersion")
-                .and("versions").as("versions");
+    public CodesetMetadataResponse getCodesetMetadata(String provider, String id) throws IOException, NotFoundException {
+        ProviderService providerService = provider(provider);
+        try {
+            CodesetMetadataResponse codesetMetadataResponse = providerService.getCodesetMetadata(id);
+            return codesetMetadataResponse;
 
-        if (provider != null && provider.equalsIgnoreCase("phinvads")) {
-            projectionOperation = projectionOperation.and("phinvadsOid").as("identifier");
-        } else {
+        } catch (Exception e) {
+            MatchOperation matchOperation = Aggregation.match(Criteria.where("provider").regex("^" + Pattern.quote(provider) + "$", "i").and("identifier").is(id)
+            );
 
+            ProjectionOperation projectionOperation = Aggregation.project()
+                    .and("name").as("name")
+                    .and("versions").as("versions")
+                    .and("latestVersion").as("latestStableVersion");
+
+            projectionOperation = projectionOperation.and("identifier").as("identifier");
+
+
+            // Execute the aggregation
+            Aggregation aggregation = Aggregation.newAggregation(matchOperation, projectionOperation);
+            AggregationResults<CodesetMetadataResponse> results = mongoTemplate.aggregate(aggregation, "codeset", CodesetMetadataResponse.class);
+            CodesetMetadataResponse fallback = results.getUniqueMappedResult();
+            if (fallback == null) {
+                throw new NotFoundException("Codeset " + id + " not found for provider " + provider);
+            }
+            return fallback;
         }
-
-        Aggregation aggregation = Aggregation.newAggregation(
-                matchOperation,
-                projectionOperation
-        );
-
-        // Execute the aggregation and expect only one result
-        AggregationResults<CodesetMetadataResponse> results = mongoTemplate.aggregate(aggregation, "codeset", CodesetMetadataResponse.class);
-        List<CodesetMetadataResponse> resultList = results.getMappedResults();
-
-        // Return the first result or null if no results
-        return resultList.isEmpty() ? null : resultList.get(0);
 
     }
 //    public List<Codeset> getCodesets(CodesetSearchCriteria criteria) throws IOException {
@@ -116,119 +130,130 @@ public class CodesetServiceImpl implements CodesetService {
 //    }
 
     @Override
-    public CodesetResponse getCodeset(String provider, String id, CodesetSearchCriteria searchCriteria) throws IOException {
-        Criteria criteria = new Criteria().andOperator(
-                Criteria.where("provider").regex("^" + Pattern.quote(provider) + "$", "i"), // Adjust "someField" to the actual field for provider
-                Criteria.where("phinvadsOid").is(id)
-        );
+    public CodesetVersionMetadataResponse getCodesetVersionMetadata(String provider, String id, String version) throws IOException, NotFoundException {
+        ProviderService providerService = provider(provider);
+        return providerService.getCodesetVersionMetadata(id, version);
+
+    }
+
+    public CodesetResponse getCodeset(String provider, String id, CodesetSearchCriteria searchCriteria) throws IOException, NotFoundException {
+        ProviderService providerService = provider(provider);
 
 
-        // Manually handle DBRefs: assuming 'codeSetVersions' holds DBRef
-        ProjectionOperation projectToExtractIds = Aggregation.project()
-                .andExpression("codeSetVersions.$id").as("versionIds")
-                .andInclude("phinvadsOid", "name", "latestVersion", "dateUpdated");
-
-        // Lookup to join with the CodesetVersion collection
-        LookupOperation lookupOperation = LookupOperation.newLookup()
-                .from("codesetVersion")
-                .localField("versionIds")
-                .foreignField("_id")
-                .as("codeSetVersionsJoined");
-        // Unwind the resulting array to handle documents separately
-        UnwindOperation unwindOperation = Aggregation.unwind("codeSetVersionsJoined");
-
-
-        // Conditional match based on version
-        MatchOperation matchVersionOperation;
-
-        if (searchCriteria.getVersion() != null) {
-            matchVersionOperation = Aggregation.match(
-                    Criteria.where("$expr").is(
-                            new org.bson.Document("$eq", java.util.Arrays.asList(
-                                    "$codeSetVersionsJoined.version", searchCriteria.getVersion()
-                            ))
-                    )
-            );
-        } else {
-            matchVersionOperation = Aggregation.match(
-                    Criteria.where("$expr").is(
-                            new org.bson.Document("$eq", java.util.Arrays.asList(
-                                    "$codeSetVersionsJoined.version", "$latestVersion.version"
-                            ))
-                    )
-            );
+        String version = searchCriteria.getVersion();
+        if (version == null) {
+            version = providerService.getLatestVersion(id);
         }
-        // Create a custom expression for filtering codes
-        AggregationExpression filterExpression = new AggregationExpression() {
-            @Override
-            public Document toDocument(AggregationOperationContext context) {
-                if (searchCriteria.getMatch() == null) {
-                    return new Document("$filter", new Document("input", "$codeSetVersionsJoined.codes").append("as", "code")
-                            .append("cond", new Document()));
-                }
-                Document filterCond = new Document("$cond", Arrays.asList(
-                        new Document("$eq", Arrays.asList("$$code.pattern", true)),
-                        new Document("$regexMatch", new Document("input", "$$code.value").append("regex", searchCriteria.getMatch()).append("options", "i")),
-                        new Document("$eq", Arrays.asList("$$code.value", searchCriteria.getMatch()))
-                ));
-                return new Document("$filter", new Document("input", "$codeSetVersionsJoined.codes")
-                        .append("as", "code")
-                        .append("cond", filterCond));
-            }
-        };
-        // Projection to shape the output
-//        ProjectionOperation projectionOperation = Aggregation.project()
-//                .and("name").as("name")
-//                .and("latestVersion").as("latestStableVersion")
-//                .and(context -> {
-//                    return new Document("$ifNull", Arrays.asList(searchCriteria.getMatch(), null));
-//                }).as("codeMatchValue")
-//                .and("codeSetVersionsJoined.codes").as("codes")
-//                .andExpression("{ $map: { input: '$codeSetVersionsJoined.codes', as: 'code', in: { " +
-//                        "value: '$$code.value', displayText: '$$code.description', codeSystem: '$$code.codeSystem' } } }"
-//                ).as("codes")
-//                .and(filterExpression).as("codes");
-        ProjectionOperation projectionOperation = Aggregation.project()
+        if(version == null) {
+            throw new IOException("Error while retrieving latest version from Phinvads web service");
+        }
+
+        providerService.getCodesetAndSave(id, version);
+
+        // Step 1: Initial match criteria for the Codeset based on provider and ID
+        Criteria criteria = Criteria.where("provider").regex("^" + Pattern.quote(provider) + "$", "i")
+                .and("identifier").is(id);
+
+        List<AggregationOperation> operations = new ArrayList<>();
+        operations.add(Aggregation.match(criteria));
+
+        // Step 2: Lookup for CodesetVersion
+        LookupOperation lookupCodesetVersion = LookupOperation.newLookup()
+                .from("codesetVersion")
+                .localField("codeSetVersions.$id")
+                .foreignField("_id")
+                .as("codesetVersion");
+        operations.add(lookupCodesetVersion);
+
+        // Step 3: Unwind CodesetVersion
+        UnwindOperation unwindCodesetVersion = Aggregation.unwind("codesetVersion");
+        operations.add(unwindCodesetVersion);
+
+        // Step 4: Match on the version using $expr
+        MatchOperation matchVersion;
+
+        matchVersion = Aggregation.match(Criteria.where("codesetVersion.version").is(version));
+
+        operations.add(matchVersion);
+
+
+        // Step 6: Use projection
+        ProjectionOperation projection;
+
+        projection = Aggregation.project()
                 .and("name").as("name")
                 .and("latestVersion").as("latestStableVersion")
-                .and(context -> {
-                    return new Document("$ifNull", Arrays.asList(searchCriteria.getMatch(), null));
-                }).as("codeMatchValue")
-                .and("codeSetVersionsJoined.codes").as("codes")
-                .andExpression("{ $map: { input: '$codeSetVersionsJoined.codes', as: 'code', in: { " +
-                        "value: '$$code.value', description: '$$code.description', codeSystem: '$$code.codeSystem' } } }"
-                ).as("codes")
+                .and("identifier").as("identifier")
+                .and("codesetVersion.version").as("version.version")
+                .and("codesetVersion._id").as("version._id")
+                .and("codesetVersion.dateUpdated").as("version.date");
+        operations.add(projection);
 
-                .and(filterExpression).as("codes")
-                // Adding the version object
-                .and("codeSetVersionsJoined.version").as("version.version")
-                .and("codeSetVersionsJoined.dateUpdated").as("version.date");
+        // Final Aggregation
+        Aggregation finalAggregation = Aggregation.newAggregation(operations);
+        AggregationResults<CodesetResponse> finalResults = mongoTemplate.aggregate(finalAggregation, "codeset", CodesetResponse.class);
 
-        if (provider != null && provider.equalsIgnoreCase("phinvads")) {
-            projectionOperation = projectionOperation.and("phinvadsOid").as("identifier");
-        } else {
 
+        CodesetResponse codesetResponse = finalResults.getUniqueMappedResult();
+        if (codesetResponse == null) {
+            throw new NotFoundException("Codeset not found");
         }
 
-        Aggregation aggregation = Aggregation.newAggregation(
-                Aggregation.match(criteria),
-                projectToExtractIds,
-                lookupOperation,
-                unwindOperation,
-                matchVersionOperation,
-                projectionOperation
-        );
+        Codeset codeset = codesetRepository.findByIdentifier(id).orElse(null);
+        CodesetVersion codesetVersion = codesetVersionRepository.findByCodesetIdAndVersion(codeset.getId(), version).orElse(null);
+        String versionId = codesetResponse.getVersion().getId();
+        boolean storedLocally = !CodesetVersion.CodesStatus.NOT_NEEDED.equals(codesetVersion.getCodesStatus());
+        String match = searchCriteria.getMatch();
+        // `version` is reassigned above; the loader lambda needs a final copy.
+        String resolvedVersion = version;
 
-        // Execute the aggregation
-        AggregationResults<CodesetResponse> results = mongoTemplate.aggregate(aggregation, "codeset", CodesetResponse.class);
-        System.out.println(provider + id);
-        System.out.println(results.getRawResults());
-        if(results.getUniqueMappedResult() == null) {
-            // return 404 codeset not found error
+        // Whole-set responses and point lookups are served from one in-memory
+        // copy of the set, fetched once per version and kept for the cache
+        // TTL. The key carries the resolved version number (not "latest") so
+        // a request without a version and one that names the current version
+        // share the same entry. A code that is not in the set is simply not
+        // in it; no further search is made.
+        String key = provider.toLowerCase() + "|" + id + "|" + resolvedVersion;
+        Supplier<List<Code>> loader = () -> {
+            try {
+                return wholeSet(providerService, id, resolvedVersion, versionId, storedLocally);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        };
+        List<Code> codes;
+        try {
+            codes = match == null ? codeIndex.all(key, loader) : codeIndex.lookup(key, match, loader);
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         }
+        List<CodeResponse> codeResponses = codes.stream()
+                .map(code -> new CodeResponse(code))
+                .collect(Collectors.toList());
+        codesetResponse.setCodes(codeResponses);
 
-        // Return the unique result or null if no results
-        return results.getMappedResults().isEmpty() ? null : results.getUniqueMappedResult();
+        // Add codeMatchValue only if searchCriteria.getMatch() is provided
+        if (searchCriteria.getMatch() != null) {
+            codesetResponse.setCodeMatchValue(searchCriteria.getMatch());
+        }
+        return codesetResponse;
+    }
+
+    /**
+     * Every code of one code set version: from the local collection when the
+     * import stored them, otherwise from the provider (sets over 500 codes are
+     * never stored locally). An empty local result falls through to the
+     * provider, as it always has.
+     */
+    private List<Code> wholeSet(ProviderService providerService, String id, String version, String versionId, boolean storedLocally) throws IOException {
+        if (!storedLocally) {
+            return providerService.getCodes(id, version, null);
+        }
+        List<Code> codes = mongoTemplate.find(Query.query(Criteria.where("codesetversionId").is(versionId)), Code.class);
+        if (codes.isEmpty()) {
+            codes = providerService.getCodes(id, version, null);
+        }
+        return codes;
     }
 
 }

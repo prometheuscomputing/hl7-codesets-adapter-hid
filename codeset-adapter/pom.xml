@@ -102,6 +102,20 @@
     </dependencies>
 
     <build>
+        <finalName>codeset-adapter</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/data</directory>
+                <targetPath>data</targetPath>
+                <filtering>false</filtering>
+                <includes>
+                    <include>phinvads-export/**/*.json.gz</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

@@ -16,6 +16,12 @@ public class CodesetMetadataResponse {
     public CodesetMetadataResponse() {
     }
 
+    public CodesetMetadataResponse(String identifier, String name, List<VersionMetadata> versions) {
+        this.identifier = identifier;
+        this.name = name;
+        this.versions = versions;
+    }
+
     public String getId() {
         return identifier;
     }
